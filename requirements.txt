@@ -9,5 +9,4 @@ apscheduler
 requests
 psutil
 pyromod
-build-essential
 python3-dev
