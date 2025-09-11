@@ -6,6 +6,7 @@ import asyncio
 import logging
 import importlib
 import time
+import requests
 from pathlib import Path
 from pyrogram import idle
 from .bot import StreamBot
@@ -27,15 +28,29 @@ logging.getLogger("pyrogram").setLevel(logging.ERROR)
 logging.getLogger("aiohttp.web").setLevel(logging.ERROR)
 
 # -------------------------------------------------------------------
-# Check for potential Heroku time drift (Pyrogram msg_id issue)
+# Time synchronization workaround for Heroku dynos
 # -------------------------------------------------------------------
-if "DYNO" in os.environ:
-    now = int(time.time())
-    logging.info(f"[Heroku Check] Current UNIX time: {now}")
-    # Simple warning, not a hard fail
-    if abs(now - int(time.time())) > 5:
-        logging.warning("⚠️ Possible time drift detected in dyno clock. "
-                        "Pyrogram may reject messages (BadMsgNotification).")
+def sync_time():
+    try:
+        r = requests.get("http://worldtimeapi.org/api/ip", timeout=5)
+        if r.status_code == 200:
+            unixtime = r.json()["unixtime"]
+            current = int(time.time())
+            drift = unixtime - current
+            if abs(drift) > 2:  # adjust only if more than 2s off
+                os.environ["TZ_OFFSET"] = str(drift)
+                logging.warning(f"[Time Sync] Adjusted drift by {drift} seconds")
+            else:
+                logging.info("[Time Sync] System time is accurate")
+    except Exception as e:
+        logging.error(f"[Time Sync] Failed to sync time: {e}")
+
+
+def now():
+    """Safe replacement for time.time() that includes drift offset."""
+    offset = int(os.environ.get("TZ_OFFSET", 0))
+    return int(time.time()) + offset
+
 
 # -------------------------------------------------------------------
 # Load plugins
@@ -47,8 +62,14 @@ files = glob.glob(ppath)
 async def start_services():
     print('\n')
     print('------------------- Initializing Telegram Bot -------------------')
+
+    # ----------------------------------------------------------------
+    # Fix Heroku time drift before starting Pyrogram
+    # ----------------------------------------------------------------
+    if Var.ON_HEROKU:
+        sync_time()
+
     await StreamBot.start()
-    # await StreamBot.invoke(raw.functions.Help.GetConfig())
     bot_info = await StreamBot.get_me()
     StreamBot.username = bot_info.username
     print("------------------------------ DONE ------------------------------")
@@ -84,8 +105,7 @@ async def start_services():
     print('-------------------- Initializing Web Server --------------------')
     runner = web.AppRunner(await web_server())
     await runner.setup()
-    # Always bind to 0.0.0.0 on Heroku
-    bind_address = "0.0.0.0"
+    bind_address = "0.0.0.0"  # Always bind to 0.0.0.0 on Heroku
     site = web.TCPSite(runner, bind_address, Var.PORT)
     await site.start()
     print('----------------------------- DONE ------------------------------')
