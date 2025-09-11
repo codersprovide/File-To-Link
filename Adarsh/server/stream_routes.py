@@ -21,6 +21,9 @@ routes = web.RouteTableDef()
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
+@routes.get("/favicon.ico")
+async def favicon(request):
+    return web.Response(status=204)  # No content
 
 # ------------------------------
 # Root status
