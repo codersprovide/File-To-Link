@@ -1,2 +1,1 @@
-web: python -m Adarsh
- 
+web: ntpdate -u pool.ntp.org && python -m Adarsh
