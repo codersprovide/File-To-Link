@@ -27,29 +27,27 @@ logging.getLogger("aiohttp").setLevel(logging.ERROR)
 logging.getLogger("pyrogram").setLevel(logging.ERROR)
 logging.getLogger("aiohttp.web").setLevel(logging.ERROR)
 
+
 # -------------------------------------------------------------------
-# Time synchronization workaround for Heroku dynos
+# Option 1: Monkey-patch time.time to avoid Pyrogram BadMsgNotification
 # -------------------------------------------------------------------
-def sync_time():
+def sync_time_and_patch():
     try:
         r = requests.get("http://worldtimeapi.org/api/ip", timeout=5)
         if r.status_code == 200:
             unixtime = r.json()["unixtime"]
-            current = int(time.time())
-            drift = unixtime - current
-            if abs(drift) > 2:  # adjust only if more than 2s off
-                os.environ["TZ_OFFSET"] = str(drift)
+            drift = unixtime - int(time.time())
+            if abs(drift) > 2:
                 logging.warning(f"[Time Sync] Adjusted drift by {drift} seconds")
+                real_time = time.time
+                time.time = lambda: real_time() + drift
             else:
                 logging.info("[Time Sync] System time is accurate")
     except Exception as e:
-        logging.error(f"[Time Sync] Failed to sync time: {e}")
+        logging.error(f"[Time Sync] Failed: {e}")
 
-
-def now():
-    """Safe replacement for time.time() that includes drift offset."""
-    offset = int(os.environ.get("TZ_OFFSET", 0))
-    return int(time.time()) + offset
+# Patch time before Pyrogram starts
+sync_time_and_patch()
 
 
 # -------------------------------------------------------------------
@@ -62,13 +60,6 @@ files = glob.glob(ppath)
 async def start_services():
     print('\n')
     print('------------------- Initializing Telegram Bot -------------------')
-
-    # ----------------------------------------------------------------
-    # Fix Heroku time drift before starting Pyrogram
-    # ----------------------------------------------------------------
-    if Var.ON_HEROKU:
-        sync_time()
-
     await StreamBot.start()
     bot_info = await StreamBot.get_me()
     StreamBot.username = bot_info.username
