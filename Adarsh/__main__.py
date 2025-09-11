@@ -9,8 +9,8 @@ import time
 import requests
 import signal
 from pathlib import Path
-from pyrogram import idle
-from pyrogram.errors import BadMsgNotification
+from pyrogram import idle, Client
+from pyrogram.errors import PeerIdInvalid, BadMsgNotification
 from .bot import StreamBot
 from .vars import Var
 from aiohttp import web
@@ -30,7 +30,7 @@ logging.getLogger("pyrogram").setLevel(logging.ERROR)
 logging.getLogger("aiohttp.web").setLevel(logging.ERROR)
 
 # -------------------------------------------------------------------
-# Time Sync Patch to avoid Pyrogram BadMsgNotification
+# Monkey-patch time.time to avoid Pyrogram BadMsgNotification
 # -------------------------------------------------------------------
 def sync_time_and_patch(retries=3):
     for attempt in range(retries):
@@ -55,38 +55,36 @@ def sync_time_and_patch(retries=3):
 sync_time_and_patch()
 
 # -------------------------------------------------------------------
-# Load plugin paths
+# Load plugins
 # -------------------------------------------------------------------
 ppath = "Adarsh/bot/plugins/*.py"
 files = glob.glob(ppath)
 
-# -------------------------------------------------------------------
-# Main async services
-# -------------------------------------------------------------------
 async def start_services():
-    # ------------------- Start Telegram Bot with retry -------------------
+    # -------------------- Telegram Bot --------------------
     while True:
         try:
             print('------------------- Initializing Telegram Bot -------------------')
             await StreamBot.start()
-            bot_info = await StreamBot.get_me()
-            StreamBot.username = bot_info.username
             break
         except BadMsgNotification:
-            logging.error("[Pyrogram Startup] BadMsgNotification: Client time not synced. Retrying in 5s...")
+            logging.error("[Pyrogram Startup] BadMsgNotification: retrying in 5s...")
             await asyncio.sleep(5)
         except Exception as e:
-            logging.error(f"[Pyrogram Startup] Failed: {e}. Retrying in 5s...")
+            logging.error(f"[Pyrogram Startup] Failed: {e}")
+            print("Retrying in 5 seconds...")
             await asyncio.sleep(5)
 
+    bot_info = await StreamBot.get_me()
+    StreamBot.username = bot_info.username
     print("------------------------------ DONE ------------------------------\n")
 
-    # ------------------- Initialize Additional Clients -------------------
+    # -------------------- Initialize Clients --------------------
     print('---------------------- Initializing Clients ----------------------')
     await initialize_clients()
     print("------------------------------ DONE ------------------------------\n")
 
-    # ------------------- Import Plugins -------------------
+    # -------------------- Import Plugins --------------------
     print('--------------------------- Importing Plugins --------------------')
     for name in files:
         patt = Path(name)
@@ -98,14 +96,13 @@ async def start_services():
         spec.loader.exec_module(load)
         sys.modules["Adarsh.bot.plugins." + plugin_name] = load
         print("Imported => " + plugin_name)
-    print()
 
-    # ------------------- Start Keepalive -------------------
+    # -------------------- Start Keepalive --------------------
     if Var.ON_HEROKU:
         print("------------------ Starting Keep Alive Service ------------------")
         asyncio.create_task(ping_server())
 
-    # ------------------- Start aiohttp Web Server -------------------
+    # -------------------- Web Server --------------------
     print('-------------------- Initializing Web Server --------------------')
     runner = web.AppRunner(await web_server())
     await runner.setup()
@@ -114,7 +111,7 @@ async def start_services():
     await site.start()
     print('----------------------------- DONE ------------------------------\n')
 
-    # ------------------- Summary -------------------
+    # -------------------- Service Summary --------------------
     print('---------------------------------------------------------------------------------------------------------')
     print(' follow me for more such exciting bots! https://github.com/aadhi000')
     print('---------------------------------------------------------------------------------------------------------')
@@ -128,30 +125,28 @@ async def start_services():
     print('Give a star to my repo https://github.com/adarsh-goel/filestreambot-pro  also follow me for new bots')
     print('---------------------------------------------------------------------------------------------------------')
 
-    # ------------------- Keep Alive -------------------
+    # -------------------- Idle --------------------
     await idle()
-
-    # ------------------- Stop Bot Cleanly -------------------
     await StreamBot.stop()
-    print('----------------------- Service Stopped -----------------------')
+
+# -------------------------------------------------------------------
+# Safe shutdown for Heroku SIGTERM
+# -------------------------------------------------------------------
+def init_shutdown(loop):
+    def stop_signal_handler():
+        logging.info("Stop signal received (SIGTERM/SIGINT). Shutting down...")
+        loop.call_soon_threadsafe(lambda: asyncio.create_task(StreamBot.stop()))
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, stop_signal_handler)
 
 # -------------------------------------------------------------------
 # Entrypoint
 # -------------------------------------------------------------------
 if __name__ == '__main__':
     try:
-        loop = asyncio.get_event_loop()
-
-        # ------------------- SIGTERM/SIGINT Handling for Heroku -------------------
-        def shutdown_handler():
-            logging.info("Stop signal received. Exiting...")
-            asyncio.create_task(StreamBot.stop())
-
-        signal.signal(signal.SIGINT, lambda s, f: shutdown_handler())
-        signal.signal(signal.SIGTERM, lambda s, f: shutdown_handler())
-
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        init_shutdown(loop)
         loop.run_until_complete(start_services())
     except KeyboardInterrupt:
         logging.info('----------------------- Service Stopped -----------------------')
-    finally:
-        loop.close()
