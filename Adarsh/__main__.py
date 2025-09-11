@@ -30,24 +30,24 @@ logging.getLogger("aiohttp.web").setLevel(logging.ERROR)
 # -------------------------------------------------------------------
 # Option 1: Monkey-patch time.time to avoid Pyrogram BadMsgNotification
 # -------------------------------------------------------------------
-def sync_time_and_patch():
-    """
-    Fetches current UTC time from worldtimeapi and adjusts time.time() if
-    drift > 2 seconds. This avoids Telegram's BadMsgNotification errors.
-    """
-    try:
-        r = requests.get("http://worldtimeapi.org/api/ip", timeout=5)
-        if r.status_code == 200:
-            unixtime = r.json()["unixtime"]
-            drift = unixtime - int(time.time())
-            if abs(drift) > 2:
-                logging.warning(f"[Time Sync] Adjusted drift by {drift} seconds")
-                real_time = time.time
-                time.time = lambda: real_time() + drift
-            else:
-                logging.info("[Time Sync] System time is accurate")
-    except Exception as e:
-        logging.error(f"[Time Sync] Failed: {e}")
+def sync_time_and_patch(retries=3):
+    for attempt in range(retries):
+        try:
+            r = requests.get("http://worldtimeapi.org/api/ip", timeout=5)
+            if r.status_code == 200:
+                unixtime = r.json()["unixtime"]
+                drift = unixtime - int(time.time())
+                if abs(drift) > 2:
+                    logging.warning(f"[Time Sync] Adjusted drift by {drift} seconds")
+                    real_time = time.time
+                    time.time = lambda: real_time() + drift
+                else:
+                    logging.info("[Time Sync] System time is accurate")
+                return
+        except Exception as e:
+            logging.error(f"[Time Sync] Attempt {attempt+1} failed: {e}")
+            time.sleep(2)
+    logging.warning("[Time Sync] Could not synchronize time, using system clock")
 
 # Patch time before Pyrogram starts
 sync_time_and_patch()
@@ -59,15 +59,15 @@ ppath = "Adarsh/bot/plugins/*.py"
 files = glob.glob(ppath)
 
 async def start_services():
-    print('\n')
-    print('------------------- Initializing Telegram Bot -------------------')
-    await StreamBot.start()
-    
-    # Ensure Pyrogram time sync on start
-    try:
-        await StreamBot.send_ping()  # Forces time sync
-    except Exception as e:
-        logging.warning(f"[Time Sync] Ping failed: {e}")
+    while True:
+        try:
+            print('------------------- Initializing Telegram Bot -------------------')
+            await StreamBot.start()
+            break  # Success, exit retry loop
+        except Exception as e:
+            logging.error(f"[Pyrogram Startup] Failed: {e}")
+            print("Retrying in 5 seconds...")
+            await asyncio.sleep(5)
 
     bot_info = await StreamBot.get_me()
     StreamBot.username = bot_info.username
