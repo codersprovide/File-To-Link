@@ -8,7 +8,7 @@ import importlib
 import time
 import requests
 from pathlib import Path
-from pyrogram import idle
+from pyrogram import idle, Client
 from .bot import StreamBot
 from .vars import Var
 from aiohttp import web
@@ -27,11 +27,14 @@ logging.getLogger("aiohttp").setLevel(logging.ERROR)
 logging.getLogger("pyrogram").setLevel(logging.ERROR)
 logging.getLogger("aiohttp.web").setLevel(logging.ERROR)
 
-
 # -------------------------------------------------------------------
 # Option 1: Monkey-patch time.time to avoid Pyrogram BadMsgNotification
 # -------------------------------------------------------------------
 def sync_time_and_patch():
+    """
+    Fetches current UTC time from worldtimeapi and adjusts time.time() if
+    drift > 2 seconds. This avoids Telegram's BadMsgNotification errors.
+    """
     try:
         r = requests.get("http://worldtimeapi.org/api/ip", timeout=5)
         if r.status_code == 200:
@@ -49,18 +52,23 @@ def sync_time_and_patch():
 # Patch time before Pyrogram starts
 sync_time_and_patch()
 
-
 # -------------------------------------------------------------------
 # Load plugins
 # -------------------------------------------------------------------
 ppath = "Adarsh/bot/plugins/*.py"
 files = glob.glob(ppath)
 
-
 async def start_services():
     print('\n')
     print('------------------- Initializing Telegram Bot -------------------')
     await StreamBot.start()
+    
+    # Ensure Pyrogram time sync on start
+    try:
+        await StreamBot.send_ping()  # Forces time sync
+    except Exception as e:
+        logging.warning(f"[Time Sync] Ping failed: {e}")
+
     bot_info = await StreamBot.get_me()
     StreamBot.username = bot_info.username
     print("------------------------------ DONE ------------------------------")
@@ -120,7 +128,6 @@ async def start_services():
 
     await idle()
     await StreamBot.stop()
-
 
 # -------------------------------------------------------------------
 # Entrypoint
