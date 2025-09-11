@@ -7,8 +7,9 @@ import logging
 import importlib
 import time
 import requests
+import signal
 from pathlib import Path
-from pyrogram import idle, Client
+from pyrogram import idle
 from pyrogram.errors import BadMsgNotification
 from .bot import StreamBot
 from .vars import Var
@@ -29,7 +30,7 @@ logging.getLogger("pyrogram").setLevel(logging.ERROR)
 logging.getLogger("aiohttp.web").setLevel(logging.ERROR)
 
 # -------------------------------------------------------------------
-# Time Sync Patch to avoid BadMsgNotification
+# Time Sync Patch to avoid Pyrogram BadMsgNotification
 # -------------------------------------------------------------------
 def sync_time_and_patch(retries=3):
     for attempt in range(retries):
@@ -140,11 +141,15 @@ async def start_services():
 if __name__ == '__main__':
     try:
         loop = asyncio.get_event_loop()
-        
+
         # ------------------- SIGTERM/SIGINT Handling for Heroku -------------------
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, lambda: asyncio.create_task(StreamBot.stop()))
-        
+        def shutdown_handler():
+            logging.info("Stop signal received. Exiting...")
+            asyncio.create_task(StreamBot.stop())
+
+        signal.signal(signal.SIGINT, lambda s, f: shutdown_handler())
+        signal.signal(signal.SIGTERM, lambda s, f: shutdown_handler())
+
         loop.run_until_complete(start_services())
     except KeyboardInterrupt:
         logging.info('----------------------- Service Stopped -----------------------')
